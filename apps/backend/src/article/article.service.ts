@@ -2,12 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { EntityManager, QueryOrder, wrap } from '@mikro-orm/core';
 import { InjectRepository } from '@mikro-orm/nestjs';
 import { EntityRepository } from '@mikro-orm/mysql';
-
+import { BadRequestException } from '@nestjs/common';
 import { User } from '../user/user.entity';
 import { Article } from './article.entity';
 import { IArticleRO, IArticlesRO, ICommentsRO } from './article.interface';
 import { Comment } from './comment.entity';
 import { CreateArticleDto, CreateCommentDto } from './dto';
+import { Tag } from '../tag/tag.entity';
 
 @Injectable()
 export class ArticleService {
@@ -19,6 +20,8 @@ export class ArticleService {
     private readonly commentRepository: EntityRepository<Comment>,
     @InjectRepository(User)
     private readonly userRepository: EntityRepository<User>,
+    @InjectRepository(Tag)
+    private readonly tagRepository: EntityRepository<Tag>,
   ) {}
 
   async findAll(userId: number, query: Record<string, string>): Promise<IArticlesRO> {
@@ -149,18 +152,45 @@ export class ArticleService {
   }
 
   async create(userId: number, dto: CreateArticleDto) {
-    const user = await this.userRepository.findOne(
-      { id: userId },
-      { populate: ['followers', 'favorites', 'articles'] },
-    );
+    // Validate input data
+    if (!dto.title || !dto.description || !dto.body) {
+        throw new BadRequestException('Title, description, and body are required.');
+    }
+    const user = await this.userRepository.findOne(userId, { populate: ['followers', 'favorites', 'articles'] });
     const article = new Article(user!, dto.title, dto.description, dto.body);
-    article.tagList.push(...dto.tagList);
+
+    const tagsToAdd = this.processTags(dto.tagList);
+    article.tagList.push(...Array.from(tagsToAdd)); // Spread Set to Array for pushing
+    
     user?.articles.add(article);
-    await this.em.flush();
+
+    await this.em.transactional(async (transactionalEntityManager) => {
+        await transactionalEntityManager.persistAndFlush(article);
+        
+        const existingTags = await this.tagRepository.find({ tag: Array.from(tagsToAdd) });
+        const existingTagNames = new Set(existingTags.map(tag => tag.tag));
+
+        for (const tagName of tagsToAdd) {
+            if (!existingTagNames.has(tagName)) {
+                const newTag = new Tag();
+                newTag.tag = tagName;
+                await transactionalEntityManager.persistAndFlush(newTag);
+            }
+        }
+    });
 
     return { article: article.toJSON(user!) };
   }
 
+  private processTags(tagList: string | string[]): Set<string> {
+      const tags = typeof tagList === 'string'
+          ? tagList.split(',').map(tag => tag.trim())
+          : Array.isArray(tagList)
+          ? tagList.map(tag => tag.trim())
+          : [];
+      return new Set(tags);
+  }
+  
   async update(userId: number, slug: string, articleData: any): Promise<IArticleRO> {
     const user = await this.userRepository.findOne(
       { id: userId },

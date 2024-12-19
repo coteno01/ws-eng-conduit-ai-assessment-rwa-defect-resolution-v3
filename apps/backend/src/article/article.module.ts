@@ -7,10 +7,16 @@ import { ArticleController } from './article.controller';
 import { Article } from './article.entity';
 import { ArticleService } from './article.service';
 import { Comment } from './comment.entity';
+import { Tag } from '../tag/tag.entity'; // Import Tag entity if not done already
+import { TagModule } from '../tag/tag.module'; // Import the TagModule that provides TagRepository
 
 @Module({
   controllers: [ArticleController],
-  imports: [MikroOrmModule.forFeature({ entities: [Article, Comment, User] }), UserModule],
+  imports: [
+    MikroOrmModule.forFeature({ entities: [Article, Comment, User, Tag] }), // Add Tag if needed
+    UserModule,
+    TagModule, // Import TagModule
+  ],
   providers: [ArticleService],
 })
 export class ArticleModule implements NestModule {
